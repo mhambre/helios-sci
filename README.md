@@ -1,3 +1,28 @@
 # Helios - System Call Interface
 
-Kernel operation abstraction layer for Helios
+`helios-sci` is the syscall interface layer for Helios. It provides a cleaner boundary between higher-level components and low-level kernel/runtime behavior.
+
+For top-level build scripts, shared targets, and project-wide setup, use the main Helios README:
+https://github.com/mhambre/helios
+
+## Build / Run / Debug
+
+From the Helios monorepo root:
+
+```bash
+just build sci release
+just build sci debug
+just gdb sci
+```
+
+Direct cargo build:
+
+```bash
+cargo +nightly build -p helios-sci --target i686-unknown-linux-gnu
+```
+
+Run directly after build:
+
+```bash
+./target/i686-unknown-linux-gnu/debug/helios-sci
+```
