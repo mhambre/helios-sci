@@ -1,64 +1,70 @@
-//! Network-related functionality.
-//! This module contains types and functions for working with network connections, such as TCP and ~~UDP~~ sockets.
-
-#[cfg(not(all(target_arch = "x86", target_os = "helios")))]
-use std::net::{SocketAddr as StdSocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream};
-
+use cfg_if::cfg_if;
 use crate::error;
 use crate::net::SocketAddr;
 
+cfg_if! {
+    if #[cfg(all(target_arch = "x86", target_os = "helios"))] {
+        mod helios;
+        use helios as backend;
+    } else {
+        mod host;
+        use host as backend;
+    }
+}
+
 /// A TCP connection.
 pub struct TcpConnection {
-    /// Remote peer address of this TCP connection.
-    addr: SocketAddr,
+    inner: backend::TcpConnection,
 }
 
 /// A TCP listener.
 pub struct TcpListener {
-    /// Local address that this listener is bound to.
-    addr: SocketAddr,
+    inner: backend::TcpListener,
 }
 
 impl TcpConnection {
     /// Connects a TCP connection to the specified address.
-    pub fn bind(_addr: SocketAddr) -> Result<TcpConnection, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+    pub fn connect(addr: SocketAddr) -> Result<TcpConnection, error::net::TcpError> {
+        let inner = backend::TcpConnection::connect(addr)?;
+        Ok(TcpConnection { inner })
     }
 
     /// Writes data to the TCP connection.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+        self.inner.write(data)
     }
 
     /// Reads data from the TCP connection.
     pub fn read(&mut self, data: &mut [u8]) -> Result<usize, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+        self.inner.read(data)
     }
 
     /// Returns the address of this remote TCP connection.
     pub fn peer_addr(&self) -> &SocketAddr {
-        &self.addr
+        self.inner.peer_addr()
     }
 }
 
 impl TcpListener {
     /// Binds a TCP listener to the specified address.
-    pub fn bind(_addr: SocketAddr) -> Result<TcpListener, error::net::TcpError> {
-        unimplemented!("TCP listeners are not supported yet on i686-helios")
+    pub fn bind(addr: SocketAddr) -> Result<TcpListener, error::net::TcpError> {
+        let inner = backend::TcpListener::bind(addr)?;
+        Ok(TcpListener { inner })
     }
 
     /// Accepts a new incoming TCP connection.
     pub fn accept(&self) -> Result<TcpConnection, error::net::TcpError> {
-        unimplemented!("TCP listeners are not supported yet on i686-helios")
+        let inner = self.inner.accept()?;
+        Ok(TcpConnection { inner })
     }
 
     /// Returns an iterator over incoming TCP connections.
     pub fn incoming(&self) -> impl Iterator<Item = Result<TcpConnection, error::net::TcpError>> + '_ {
-        std::iter::repeat_with(|| self.accept())
+        self.inner.incoming().map(|res| res.map(|inner| TcpConnection { inner }))
     }
 
     /// Returns the local address that this listener is bound to.
     pub fn local_addr(&self) -> &SocketAddr {
-        &self.addr
+        self.inner.local_addr()
     }
 }

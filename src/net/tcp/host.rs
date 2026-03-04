@@ -7,15 +7,15 @@ use std::net::{SocketAddr as StdSocketAddr, TcpListener as StdTcpListener, TcpSt
 use crate::error;
 use crate::net::SocketAddr;
 
-/// A TCP connection.
-pub struct TcpConnection {
+/// Host backend TCP connection.
+pub(crate) struct TcpConnection {
     /// Remote peer address of this TCP connection.
     addr: SocketAddr,
     connection: StdTcpStream,
 }
 
-/// A TCP listener.
-pub struct TcpListener {
+/// Host backend TCP listener.
+pub(crate) struct TcpListener {
     /// Local address that this listener is bound to.
     addr: SocketAddr,
     listener: StdTcpListener,
@@ -23,31 +23,31 @@ pub struct TcpListener {
 
 impl TcpConnection {
     /// Binds a TCP connection to the specified address.
-    pub fn connect(addr: SocketAddr) -> Result<TcpConnection, error::net::TcpError> {
+    pub(crate) fn connect(addr: SocketAddr) -> Result<TcpConnection, error::net::TcpError> {
         let std_addr = StdSocketAddr::try_from(addr.clone()).map_err(|_| error::net::TcpError::BindFailed)?;
         let conn = StdTcpStream::connect(std_addr).map_err(|_| error::net::TcpError::ConnectionFailed)?;
         Ok(TcpConnection { addr, connection: conn })
     }
 
     /// Writes data to the TCP connection.
-    pub fn write(&mut self, data: &[u8]) -> Result<usize, error::net::TcpError> {
+    pub(crate) fn write(&mut self, data: &[u8]) -> Result<usize, error::net::TcpError> {
         self.connection.write(data).map_err(|_| error::net::TcpError::WriteFailed)
     }
 
     /// Reads data from the TCP connection.
-    pub fn read(&mut self, data: &mut [u8]) -> Result<usize, error::net::TcpError> {
+    pub(crate) fn read(&mut self, data: &mut [u8]) -> Result<usize, error::net::TcpError> {
         self.connection.read(data).map_err(|_| error::net::TcpError::ReadFailed)
     }
 
     /// Returns the address of this remote TCP connection.
-    pub fn peer_addr(&self) -> &SocketAddr {
+    pub(crate) fn peer_addr(&self) -> &SocketAddr {
         &self.addr
     }
 }
 
 impl TcpListener {
     /// Binds a TCP listener to the specified address.
-    pub fn bind(addr: SocketAddr) -> Result<TcpListener, error::net::TcpError> {
+    pub(crate) fn bind(addr: SocketAddr) -> Result<TcpListener, error::net::TcpError> {
         let std_addr = StdSocketAddr::try_from(addr.clone()).map_err(|_| error::net::TcpError::BindFailed)?;
         let listener = StdTcpListener::bind(std_addr).map_err(|_| error::net::TcpError::BindFailed)?;
         let local = listener.local_addr().map_err(|_| error::net::TcpError::BindFailed)?;
@@ -59,7 +59,7 @@ impl TcpListener {
     }
 
     /// Accepts a new incoming TCP connection.
-    pub fn accept(&self) -> Result<TcpConnection, error::net::TcpError> {
+    pub(crate) fn accept(&self) -> Result<TcpConnection, error::net::TcpError> {
         let (conn, addr) = self.listener.accept().map_err(|_| error::net::TcpError::ConnectionFailed)?;
         let socket_addr = SocketAddr::new(addr.ip().to_string(), addr.port());
         Ok(TcpConnection {
@@ -69,12 +69,12 @@ impl TcpListener {
     }
 
     /// Returns an iterator over incoming TCP connections.
-    pub fn incoming(&self) -> impl Iterator<Item = Result<TcpConnection, error::net::TcpError>> + '_ {
+    pub(crate) fn incoming(&self) -> impl Iterator<Item = Result<TcpConnection, error::net::TcpError>> + '_ {
         std::iter::repeat_with(|| self.accept())
     }
 
     /// Returns the local address that this listener is bound to.
-    pub fn local_addr(&self) -> &SocketAddr {
+    pub(crate) fn local_addr(&self) -> &SocketAddr {
         &self.addr
     }
 }
