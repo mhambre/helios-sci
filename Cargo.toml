@@ -7,4 +7,6 @@ edition = "2024"
 cfg-if = "1.0"
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("helios"))'] }
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(target_os, values("helios"))',
+] }
