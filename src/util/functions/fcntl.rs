@@ -12,5 +12,6 @@ pub(crate) const FD_CLOEXEC: i32 = 1; /* Close the fd on exec.  */
 
 // https://man7.org/linux/man-pages/man2/fcntl.2.html
 pub(crate) fn fcntl(fd: i32, cmd: i32, arg: i32) -> Result<i32, i32> {
-    syscall3(FCNTL, fd, cmd, arg).map(|res| res as i32)
+    // SAFETY: `FCNTL` number and integer arguments follow Linux i386 syscall ABI.
+    unsafe { syscall3(FCNTL, fd, cmd, arg) }.map(|res| res as i32)
 }

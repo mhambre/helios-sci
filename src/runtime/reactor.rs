@@ -1,19 +1,14 @@
 //! The polling system for our asynchronous runtime, how our executor
 //! waits for events and wakes up tasks.
 
-use std::os::fd;
-
-use crate::util::functions::{EPOLL_CTL_ADD, epoll, epoll_create1, epoll_ctl, epoll_event, fcntl};
+use crate::util::functions::epoll::{EPOLL_CLOEXEC, EPOLL_CTL_ADD, epoll_create1, epoll_ctl, epoll_event};
 
 const RESERVED_FD: i32 = 0; // We reserve fd 0 for the runtime descriptor, which we use to track events.
 
 // Helper function to get a file descriptor for an epoll instance that will
 // be closed on exec.
 fn create_fd() -> Result<i32, i32> {
-    let fd = epoll_create1(0)?;
-    let flags = fcntl(fd, fcntl::F_GETFL, 0)?;
-    fcntl(fd, fcntl::F_SETFL, flags | fcntl::FD_CLOEXEC)?;
-    Ok(fd)
+    epoll_create1(EPOLL_CLOEXEC)
 }
 
 // Helper function to add a file descriptor to the epoll instance with
