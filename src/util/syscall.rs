@@ -175,3 +175,26 @@ pub(crate) unsafe fn syscall6(num: u32, a1: i32, a2: i32, a3: i32, a4: i32, a5: 
     }
     decode_ret(ret)
 }
+
+#[cfg(all(test, target_arch = "x86", target_os = "linux"))]
+mod tests {
+    use super::{syscall0, syscall1};
+    use crate::util::errno;
+
+    const GETPID: u32 = 20;
+    const CLOSE: u32 = 6;
+
+    #[test]
+    fn syscall_getpid_succeeds() {
+        // SAFETY: `GETPID` takes no arguments and returns current process id.
+        let pid = unsafe { syscall0(GETPID) }.expect("getpid should succeed");
+        assert!(pid > 0);
+    }
+
+    #[test]
+    fn syscall_close_invalid_fd_returns_ebadf() {
+        // SAFETY: `close(-1)` is valid input and should fail with EBADF.
+        let err = unsafe { syscall1(CLOSE, -1) }.expect_err("close(-1) should fail");
+        assert_eq!(err, errno::EBADF);
+    }
+}

@@ -1,7 +1,7 @@
 use crate::util::errno;
 use crate::util::syscall::syscall1;
 
-// x86 Linux `brk` syscall number.
+// System call numbers for x86 Linux.
 const BRK: u32 = 45;
 
 /// https://man7.org/linux/man-pages/man2/brk.2.html

@@ -33,3 +33,30 @@ pub(crate) fn close(fd: i32) -> Result<(), i32> {
     // SAFETY: `CLOSE` number and integer argument follow Linux i386 syscall ABI.
     unsafe { syscall1(CLOSE, fd) }.map(|_| ())
 }
+
+#[cfg(all(test, target_arch = "x86", target_os = "linux"))]
+mod tests {
+    use super::{close, open, read};
+    use crate::util::errno;
+
+    #[test]
+    fn open_nonexistent_path_returns_enoent() {
+        let path = b"/__helios_sci_missing_file_for_test__\0";
+        let err = open(path, 0, 0).expect_err("open on missing path should fail");
+        assert_eq!(err, errno::ENOENT);
+    }
+
+    #[test]
+    fn open_and_read_manifest_succeeds() {
+        let mut path = std::env::var("CARGO_MANIFEST_DIR")
+            .expect("CARGO_MANIFEST_DIR should be set")
+            .into_bytes();
+        path.extend_from_slice(b"/Cargo.toml\0");
+
+        let fd = open(&path, 0, 0).expect("open Cargo.toml should succeed");
+        let mut buf = [0_u8; 32];
+        let n = read(fd, &mut buf).expect("read should succeed");
+        close(fd).expect("close should succeed");
+        assert!(n > 0);
+    }
+}

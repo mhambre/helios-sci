@@ -45,3 +45,15 @@ pub(crate) fn epoll_wait(epfd: i32, events: &mut [epoll_event], timeout: i32) ->
     unsafe { syscall4(EPOLL_WAIT, epfd, events.as_mut_ptr() as usize as i32, events.len() as i32, timeout) }
         .map(|n| n as usize)
 }
+
+#[cfg(all(test, target_arch = "x86", target_os = "linux"))]
+mod tests {
+    use super::{EPOLL_CLOEXEC, epoll_create1};
+    use crate::util::functions::file::close;
+
+    #[test]
+    fn epoll_create_and_close_succeeds() {
+        let epfd = epoll_create1(EPOLL_CLOEXEC).expect("epoll_create1 should succeed");
+        close(epfd).expect("close epoll fd should succeed");
+    }
+}
