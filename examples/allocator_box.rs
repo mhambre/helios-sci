@@ -21,10 +21,7 @@ fn main() {
     for (i, chunk) in chunks.iter().enumerate() {
         for (j, byte) in chunk.iter().enumerate() {
             let expected = (i as u8).wrapping_mul(31).wrapping_add((j % 251) as u8);
-            assert_eq!(
-                *byte, expected,
-                "memory validation failed at chunk {i}, offset {j}"
-            );
+            assert_eq!(*byte, expected, "memory validation failed at chunk {i}, offset {j}");
         }
     }
 }
