@@ -1,7 +1,7 @@
 //! Network address types and utilities.
 
 use core::convert::TryFrom;
-#[cfg(not(all(target_arch = "x86", target_os = "helios")))]
+#[cfg(not(all(target_arch = "x86_64", target_os = "helios")))]
 use std::net::SocketAddr as StdSocketAddr;
 
 use crate::error;
@@ -52,7 +52,7 @@ impl TryFrom<&str> for SocketAddr {
 }
 
 /// Converts a `crate::SocketAddr` into a `std::SocketAddr`.
-#[cfg(not(all(target_arch = "x86", target_os = "helios")))]
+#[cfg(not(all(target_arch = "x86_64", target_os = "helios")))]
 impl TryFrom<SocketAddr> for StdSocketAddr {
     type Error = error::net::AddressError;
 
@@ -95,7 +95,7 @@ mod tests {
         assert_eq!(err, error::net::AddressError::InvalidAddress);
     }
 
-    #[cfg(not(all(target_arch = "x86", target_os = "helios")))]
+    #[cfg(not(all(target_arch = "x86_64", target_os = "helios")))]
     #[test]
     fn converts_to_std_socket_addr() {
         let addr = SocketAddr::new("127.0.0.1".to_string(), 3030);
