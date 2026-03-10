@@ -1,49 +1,53 @@
-use crate::util::errno;
 use crate::util::syscall::{syscall1, syscall3};
 
-// System call numbers for x86 Linux.
-const OPEN: u32 = 5; /* open a file descriptor */
-const READ: u32 = 3; /* read from a file descriptor */
-const WRITE: u32 = 4; /* write to a file descriptor */
-const CLOSE: u32 = 6; /* close a file descriptor */
+// System call numbers for x86_64 Linux.
+const OPEN: u64 = 2; /* open a file descriptor */
+const READ: u64 = 0; /* read from a file descriptor */
+const WRITE: u64 = 1; /* write to a file descriptor */
+const CLOSE: u64 = 3; /* close a file descriptor */
+
+#[inline]
+fn arg_i32(value: i32) -> usize {
+    value as isize as usize
+}
 
 // https://man7.org/linux/man-pages/man2/open.2.html
 pub(crate) fn open(path: &[u8], flags: i32, mode: i32) -> Result<i32, i32> {
     if path.is_empty() || *path.last().unwrap_or(&0) != 0 {
-        return Err(errno::EINVAL);
+        return Err(libc::EINVAL);
     }
-    // SAFETY: `path` is NUL-terminated and pointer/args are passed using Linux i386 syscall ABI.
-    unsafe { syscall3(OPEN, path.as_ptr() as usize as i32, flags, mode) }.map(|fd| fd as i32)
+
+    // SAFETY: `path` is NUL-terminated and pointer/args are passed using Linux x86_64 syscall ABI.
+    unsafe { syscall3(OPEN, path.as_ptr() as usize, arg_i32(flags), arg_i32(mode)) }.map(|fd| fd as i32)
 }
 
 // https://man7.org/linux/man-pages/man2/read.2.html
 pub(crate) fn read(fd: i32, buf: &mut [u8]) -> Result<usize, i32> {
     // SAFETY: `buf` points to writable memory for `buf.len()` bytes.
-    unsafe { syscall3(READ, fd, buf.as_mut_ptr() as usize as i32, buf.len() as i32) }.map(|n| n as usize)
+    unsafe { syscall3(READ, arg_i32(fd), buf.as_mut_ptr() as usize, buf.len()) }
 }
 
 // https://man7.org/linux/man-pages/man2/write.2.html
 pub(crate) fn write(fd: i32, buf: &[u8]) -> Result<usize, i32> {
     // SAFETY: `buf` points to readable memory for `buf.len()` bytes.
-    unsafe { syscall3(WRITE, fd, buf.as_ptr() as usize as i32, buf.len() as i32) }.map(|n| n as usize)
+    unsafe { syscall3(WRITE, arg_i32(fd), buf.as_ptr() as usize, buf.len()) }
 }
 
 // https://man7.org/linux/man-pages/man2/close.2.html
 pub(crate) fn close(fd: i32) -> Result<(), i32> {
-    // SAFETY: `CLOSE` number and integer argument follow Linux i386 syscall ABI.
-    unsafe { syscall1(CLOSE, fd) }.map(|_| ())
+    // SAFETY: `CLOSE` number and integer argument follow Linux x86_64 syscall ABI.
+    unsafe { syscall1(CLOSE, arg_i32(fd)) }.map(|_| ())
 }
 
-#[cfg(all(test, target_arch = "x86", target_os = "linux"))]
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod tests {
     use super::{close, open, read};
-    use crate::util::errno;
 
     #[test]
     fn open_nonexistent_path_returns_enoent() {
         let path = b"/__helios_sci_missing_file_for_test__\0";
         let err = open(path, 0, 0).expect_err("open on missing path should fail");
-        assert_eq!(err, errno::ENOENT);
+        assert_eq!(err, libc::ENOENT);
     }
 
     #[test]

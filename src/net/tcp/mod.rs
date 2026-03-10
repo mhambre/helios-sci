@@ -4,14 +4,14 @@ use crate::error;
 use crate::net::SocketAddr;
 
 cfg_if! {
-    if #[cfg(all(target_arch = "x86", target_os = "helios"))] {
+    if #[cfg(all(target_arch = "x86_64", target_os = "helios"))] {
         mod helios;
         use helios as backend;
     } else if #[cfg(target_os = "linux")] {
         mod linux;
         use linux as backend;
     } else {
-        compile_error!("Unsupported target OS for TCP module");
+        compile_error!("Unsupported Target OS");
     }
 }
 

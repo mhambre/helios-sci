@@ -1,188 +1,52 @@
-//! Linux and Helios x86 shared system call abstractions, using the int 0x80 syscall ABI
-//! for maximum compatibility with older kernels and Helios itself.
+//! Linux and Helios x86_64 shared system call abstractions, using the `syscall`
+//! instruction and the x86_64 syscall ABI.
 //!
-//! https://x86.syscall.sh/
+//! https://x64.syscall.sh/
 use core::arch::asm;
 
 #[inline(always)]
-fn decode_ret(ret: i32) -> Result<usize, i32> {
+fn decode_ret(ret: isize) -> Result<usize, i32> {
     if (-4095..=-1).contains(&ret) {
-        Err(-ret)
+        Err((-ret) as i32)
     } else {
         Ok(ret as usize)
     }
 }
 
-#[inline(always)]
-pub(crate) unsafe fn syscall0(num: u32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Register constraints follow x86 int 0x80 syscall ABI.
-    unsafe {
-        asm!("int 0x80", inlateout("eax") num as i32 => ret);
-    }
-    decode_ret(ret)
+macro_rules! define_syscall {
+    ($name:ident ( $($arg:ident),* ) [ $($operands:tt)* ]) => {
+        #[inline(always)]
+        pub(crate) unsafe fn $name(num: u64 $(, $arg: usize)*) -> Result<usize, i32> {
+            let ret: isize;
+            // SAFETY: Register constraints follow Linux x86_64 syscall ABI.
+            unsafe {
+                asm!(
+                    "syscall",
+                    inlateout("rax") num as usize => ret,
+                    $($operands)*
+                    lateout("rcx") _,
+                    lateout("r11") _,
+                );
+            }
+            decode_ret(ret)
+        }
+    };
 }
 
-#[inline(always)]
-pub(crate) unsafe fn syscall1(num: u32, a1: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx because LLVM may reserve it for PIC/GOT.
-    unsafe {
-        asm!(
-            "push ebx",
-            "mov ebx, {a1:e}",
-            "int 0x80",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            inlateout("eax") num as i32 => ret,
-        );
-    }
-    decode_ret(ret)
-}
+define_syscall!(syscall0() []);
+define_syscall!(syscall1(a1) [in("rdi") a1,]);
+define_syscall!(syscall2(a1, a2) [in("rdi") a1, in("rsi") a2,]);
+define_syscall!(syscall3(a1, a2, a3) [in("rdi") a1, in("rsi") a2, in("rdx") a3,]);
+define_syscall!(syscall4(a1, a2, a3, a4) [in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4,]);
+define_syscall!(syscall5(a1, a2, a3, a4, a5) [in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5,]);
+define_syscall!(syscall6(a1, a2, a3, a4, a5, a6) [in("rdi") a1, in("rsi") a2, in("rdx") a3, in("r10") a4, in("r8") a5, in("r9") a6,]);
 
-#[inline(always)]
-pub(crate) unsafe fn syscall2(num: u32, a1: i32, a2: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx because LLVM may reserve it for PIC/GOT.
-    unsafe {
-        asm!(
-            "push ebx",
-            "mov ebx, {a1:e}",
-            "mov ecx, {a2:e}",
-            "int 0x80",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            a2 = in(reg) a2 as i32,
-            inlateout("eax") num as i32 => ret,
-            lateout("ecx") _,
-        );
-    }
-    decode_ret(ret)
-}
-
-#[inline(always)]
-pub(crate) unsafe fn syscall3(num: u32, a1: i32, a2: i32, a3: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx because LLVM may reserve it for PIC/GOT.
-    unsafe {
-        asm!(
-            "push ebx",
-            "mov ebx, {a1:e}",
-            "mov ecx, {a2:e}",
-            "mov edx, {a3:e}",
-            "int 0x80",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            a2 = in(reg) a2 as i32,
-            a3 = in(reg) a3 as i32,
-            inlateout("eax") num as i32 => ret,
-            lateout("ecx") _,
-            lateout("edx") _,
-        );
-    }
-    decode_ret(ret)
-}
-
-#[inline(always)]
-pub(crate) unsafe fn syscall4(num: u32, a1: i32, a2: i32, a3: i32, a4: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx/esi because LLVM may reserve them for generated code.
-    unsafe {
-        asm!(
-            "push ebx",
-            "push esi",
-            "mov ebx, {a1:e}",
-            "mov ecx, {a2:e}",
-            "mov edx, {a3:e}",
-            "mov esi, {a4:e}",
-            "int 0x80",
-            "pop esi",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            a2 = in(reg) a2 as i32,
-            a3 = in(reg) a3 as i32,
-            a4 = in(reg) a4 as i32,
-            inlateout("eax") num as i32 => ret,
-            lateout("ecx") _,
-            lateout("edx") _,
-        );
-    }
-    decode_ret(ret)
-}
-
-#[inline(always)]
-pub(crate) unsafe fn syscall5(num: u32, a1: i32, a2: i32, a3: i32, a4: i32, a5: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx/esi/edi because LLVM may reserve them for generated code.
-    unsafe {
-        asm!(
-            "push ebx",
-            "push esi",
-            "push edi",
-            "mov ebx, {a1:e}",
-            "mov ecx, {a2:e}",
-            "mov edx, {a3:e}",
-            "mov esi, {a4:e}",
-            "mov edi, {a5:e}",
-            "int 0x80",
-            "pop edi",
-            "pop esi",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            a2 = in(reg) a2 as i32,
-            a3 = in(reg) a3 as i32,
-            a4 = in(reg) a4 as i32,
-            a5 = in(reg) a5 as i32,
-            inlateout("eax") num as i32 => ret,
-            lateout("ecx") _,
-            lateout("edx") _,
-        );
-    }
-    decode_ret(ret)
-}
-
-#[inline(always)]
-pub(crate) unsafe fn syscall6(num: u32, a1: i32, a2: i32, a3: i32, a4: i32, a5: i32, a6: i32) -> Result<usize, i32> {
-    let ret: i32;
-    // SAFETY: Preserve ebx/esi/edi/ebp because LLVM may reserve them for generated code.
-    unsafe {
-        asm!(
-            "push ebx",
-            "push esi",
-            "push edi",
-            "push ebp",
-            "mov ebx, {a1:e}",
-            "mov ecx, {a2:e}",
-            "mov edx, {a3:e}",
-            "mov esi, {a4:e}",
-            "mov edi, {a5:e}",
-            "mov ebp, {a6:e}",
-            "int 0x80",
-            "pop ebp",
-            "pop edi",
-            "pop esi",
-            "pop ebx",
-            a1 = in(reg) a1 as i32,
-            a2 = in(reg) a2 as i32,
-            a3 = in(reg) a3 as i32,
-            a4 = in(reg) a4 as i32,
-            a5 = in(reg) a5 as i32,
-            a6 = in(reg) a6 as i32,
-            inlateout("eax") num as i32 => ret,
-            lateout("ecx") _,
-            lateout("edx") _,
-        );
-    }
-    decode_ret(ret)
-}
-
-#[cfg(all(test, target_arch = "x86", target_os = "linux"))]
+#[cfg(all(test, target_arch = "x86_64", target_os = "linux"))]
 mod tests {
     use super::{syscall0, syscall1};
-    use crate::util::errno;
 
-    const GETPID: u32 = 20;
-    const CLOSE: u32 = 6;
+    const GETPID: u64 = 39;
+    const CLOSE: u64 = 3;
 
     #[test]
     fn syscall_getpid_succeeds() {
@@ -194,7 +58,7 @@ mod tests {
     #[test]
     fn syscall_close_invalid_fd_returns_ebadf() {
         // SAFETY: `close(-1)` is valid input and should fail with EBADF.
-        let err = unsafe { syscall1(CLOSE, -1) }.expect_err("close(-1) should fail");
-        assert_eq!(err, errno::EBADF);
+        let err = unsafe { syscall1(CLOSE, (-1_i32) as isize as usize) }.expect_err("close(-1) should fail");
+        assert_eq!(err, libc::EBADF);
     }
 }

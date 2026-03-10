@@ -1,8 +1,8 @@
 extern crate alloc;
 
-pub mod allocate;
 pub mod error;
+pub mod mem;
 pub mod net;
-pub mod runtime;
+pub mod sync;
 
 mod util;

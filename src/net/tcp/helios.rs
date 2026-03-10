@@ -19,17 +19,17 @@ pub(crate) struct TcpListener {
 impl TcpConnection {
     /// Connects a TCP connection to the specified address.
     pub(crate) fn connect(_addr: SocketAddr) -> Result<TcpConnection, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+        unimplemented!("TCP connections are not supported yet on x86_64-helios")
     }
 
     /// Writes data to the TCP connection.
     pub(crate) fn write(&mut self, _data: &[u8]) -> Result<usize, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+        unimplemented!("TCP connections are not supported yet on x86_64-helios")
     }
 
     /// Reads data from the TCP connection.
     pub(crate) fn read(&mut self, _data: &mut [u8]) -> Result<usize, error::net::TcpError> {
-        unimplemented!("TCP connections are not supported yet on i686-helios")
+        unimplemented!("TCP connections are not supported yet on x86_64-helios")
     }
 
     /// Returns the address of this remote TCP connection.
@@ -41,12 +41,12 @@ impl TcpConnection {
 impl TcpListener {
     /// Binds a TCP listener to the specified address.
     pub(crate) fn bind(_addr: SocketAddr) -> Result<TcpListener, error::net::TcpError> {
-        unimplemented!("TCP listeners are not supported yet on i686-helios")
+        unimplemented!("TCP listeners are not supported yet on x86_64-helios")
     }
 
     /// Accepts a new incoming TCP connection.
     pub(crate) fn accept(&self) -> Result<TcpConnection, error::net::TcpError> {
-        unimplemented!("TCP listeners are not supported yet on i686-helios")
+        unimplemented!("TCP listeners are not supported yet on x86_64-helios")
     }
 
     /// Returns an iterator over incoming TCP connections.

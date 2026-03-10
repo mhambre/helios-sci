@@ -18,11 +18,11 @@ just gdb sci
 Direct cargo build:
 
 ```bash
-cargo +nightly build -p helios-sci --target i686-unknown-linux-gnu
+cargo +nightly build -p helios-sci --target x86_64-unknown-linux-gnu
 ```
 
 Run directly after build:
 
 ```bash
-./target/i686-unknown-linux-gnu/debug/helios-sci
+./target/x86_64-unknown-linux-gnu/debug/helios-sci
 ```
