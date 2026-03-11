@@ -1,5 +1,4 @@
-//! Memory allocation utilities for the Helios runtime.
-#![allow(dead_code)]
+//! Free-List Allocator - Helios Userspace Implementation
 
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
