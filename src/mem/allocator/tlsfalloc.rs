@@ -3,13 +3,16 @@
 // Note, account for offset later
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::sync::atomic::Ordering;
 use std::ptr::null_mut;
+
+use crate::mem::allocator::shared::{AtomicAllocState, DEFAULT_HEAP_SIZE, PAGE_SIZE, request_heap_chunk};
+use crate::util::numbers::align_up;
 
 const FL_OFFSET: usize = 6; // 64 bytes/blocks is the first reasonable block size
 const FIRST_LEVEL_SIZE: usize = 1 << 6; // 1 word; 64 bytes/blocks
 const SECOND_LEVEL_SHIFT: usize = 4; // Number of bits to represent the second level index; 16 blocks per first level block
 const SECOND_LEVEL_SIZE: usize = 1 << SECOND_LEVEL_SHIFT; // 1/4 word, 16 bytes/blocks
-const HEAP_CHUNK_SIZE: usize = 1024 * 1024; // 1 MiB heap allocated from the kernel at a time
 
 // A free block in the TLSF allocator. The `size` field includes the size
 // of the block itself, and the `next` pointer is used to link free blocks
@@ -25,7 +28,16 @@ pub struct FreeBlock {
     prev_physical: usize,
 }
 
+/// Metadata header for allocated blocks so we can track the size and previous physical block for coalescing on free
+pub struct AllocHeader {
+    /// The size of the allocated block, including the size of the block itself
+    size: usize,
+    /// The previous physical block in memory
+    prev_physical: usize,
+}
+
 const MIN_FREE_BLOCK_SIZE: usize = core::mem::size_of::<FreeBlock>();
+const MIN_ALLOC_BLOCK_SIZE: usize = core::mem::size_of::<AllocHeader>();
 
 // Helper to map a size to an expected bitmap index
 pub fn get_optimal_free_list_index(size: usize) -> (usize, usize) {
@@ -48,6 +60,8 @@ pub struct TlsfAllocator {
     l1_bitmap: usize,
     l2_bitmap: [usize; FIRST_LEVEL_SIZE],
     free_lists: [[*mut FreeBlock; SECOND_LEVEL_SIZE]; FIRST_LEVEL_SIZE],
+    // Above will go in a Mutex
+    state: AtomicAllocState,
 }
 
 impl TlsfAllocator {
@@ -57,16 +71,109 @@ impl TlsfAllocator {
             l1_bitmap: 0,
             l2_bitmap: [0; FIRST_LEVEL_SIZE],
             free_lists: [[null_mut(); SECOND_LEVEL_SIZE]; FIRST_LEVEL_SIZE],
+            state: AtomicAllocState::new(super::shared::AllocState::Uninitialized),
+        }
+    }
+
+    /// Initializes the allocator with a start free block
+    pub fn init(&self) {
+        if self.state.load(Ordering::Acquire) == super::shared::AllocState::Ready {
+            return;
+        }
+
+        let initial_pool = self.add_pool(DEFAULT_HEAP_SIZE);
+
+        self.state.store(super::shared::AllocState::Ready, Ordering::Release);
+    }
+
+    /// Requests a new contiguous block of memory from the kernel and adds it to the free lists
+    fn add_pool(&self, size: usize) -> *mut FreeBlock {
+        let sentinel_size = 2 * MIN_FREE_BLOCK_SIZE;
+        let request_size: usize = align_up(core::cmp::max(size, DEFAULT_HEAP_SIZE), PAGE_SIZE) + sentinel_size;
+        let block = unsafe { request_heap_chunk(Some(request_size)) as *mut FreeBlock };
+
+        // Likely an OOM error if we can't get a new pool
+        if block.is_null() {
+            return null_mut();
+        }
+
+        let pool = block as usize + MIN_FREE_BLOCK_SIZE;
+        let end = block as usize + request_size - MIN_FREE_BLOCK_SIZE;
+
+        unsafe {
+            /// Our actual free block of memory
+            let pool_block = pool as *mut FreeBlock;
+            (*pool_block).size = request_size - sentinel_size;
+            (*pool_block).next = null_mut();
+            (*pool_block).prev = null_mut();
+            (*pool_block).prev_physical = block as usize;
+
+            /// Front sentinel block
+            (*block).size = sentinel_size;
+            (*block).next = null_mut();
+            (*block).prev = null_mut();
+            (*block).prev_physical = 0;
+
+            /// Rear sentinel block
+            let end_block = end as *mut FreeBlock;
+            (*end_block).size = sentinel_size;
+            (*end_block).next = null_mut();
+            (*end_block).prev = null_mut();
+            (*end_block).prev_physical = pool_block as usize;
+
+            // Add the new pool block to the free lists
+            // Sentinels are ignored to
+            let (l1_index, l2_index) = get_optimal_free_list_index((*pool_block).size);
+            self.l1_bitmap |= 1 << l1_index;
+            self.l2_bitmap[l1_index] |= 1 << l2_index;
+            self.free_lists[l1_index][l2_index] = pool_block;
+
+            pool_block
         }
     }
 
     // Mapps the first available free block to its bitmap index. This is used to find the next
     // free block to allocate from.
-    pub fn get_next_available_free(&self, size: usize) -> (usize, usize) {
+    fn get_next_available_free(&self, size: usize) -> (usize, usize) {
         let (optimal_l1_index, optimal_l2_index) = get_optimal_free_list_index(size);
         let l1_index = (self.l1_bitmap & ((1 << optimal_l1_index) - 1)).trailing_zeros() as usize;
         let l2_index = (self.l2_bitmap[l1_index] & ((1 << optimal_l2_index) - 1)).trailing_zeros() as usize;
         (l1_index, l2_index)
+    }
+
+    // Removes a free block from the free lists and updates the bitmaps accordingly
+    // will be used for allocation
+    fn pop_free_block(&self, size: usize) -> *mut FreeBlock {
+        let (l1_index, l2_index) = get_optimal_free_list_index(size);
+        let block = self.free_lists[l1_index][l2_index];
+
+        // Update the free list to remove the block
+        if block.is_null() {
+            // No free block available, we should find the next available free block in the bitmaps
+            let (next_l1_index, next_l2_index) = self.get_next_available_free(size);
+
+            // We definitely can't go backwards, so 0 means no available block
+            // https://doc.rust-lang.org/std/primitive.u32.html#method.trailing_zeros
+            if next_l1_index == 0 as usize {
+                self.add_pool(size);
+            }
+
+            unimplemented!()
+        } else {
+            // We had an available free block, so we need to update the free list and bitmaps
+            let next = unsafe { (*block).next };
+            self.free_lists[l1_index][l2_index] = next;
+
+            // If the free list is now empty, update the bitmaps
+            if next.is_null() {
+                self.l2_bitmap[l1_index] &= !(1 << l2_index);
+                if self.l2_bitmap[l1_index] == 0 {
+                    self.l1_bitmap &= !(1 << l1_index);
+                }
+            }
+
+            block
+        }
     }
 }
 
@@ -78,10 +185,32 @@ impl Default for TlsfAllocator {
 
 unsafe impl GlobalAlloc for TlsfAllocator {
     unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
+        self.init();
         null_mut()
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+        self.init();
         unimplemented!()
+    }
+}
+
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_optimal_free_list_index() {
+        assert_eq!(get_optimal_free_list_index(0), (0, 0));
+        assert_eq!(get_optimal_free_list_index(1), (0, 0));
+        assert_eq!(get_optimal_free_list_index(63), (0, 0));
+        assert_eq!(get_optimal_free_list_index(64), (1, 0));
+        assert_eq!(get_optimal_free_list_index(128), (2, 0));
+        assert_eq!(get_optimal_free_list_index(32768), (10, 0));
+        assert_eq!(get_optimal_free_list_index(65536), (11, 0));
+        assert_eq!(get_optimal_free_list_index(480), (2, 12));
+        assert_eq!(get_optimal_free_list_index(72), (0, 2));
+        assert_eq!(get_optimal_free_list_index(96), (0, 8));
+        assert_eq!(get_optimal_free_list_index(200), (1, 9));
+        assert_eq!(get_optimal_free_list_index(1000), (3, 15));
     }
 }
