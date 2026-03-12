@@ -5,7 +5,7 @@ use core::ptr::null_mut;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{cmp, mem};
 
-use crate::mem::allocator::shared::{AllocState, AtomicAllocState, DEFAULT_HEAP_SIZE, PAGE_SIZE};
+use crate::mem::allocator::shared::{AllocState, AtomicAllocState, DEFAULT_HEAP_SIZE, PAGE_SIZE, request_heap_chunk};
 use crate::util::numbers::align_up;
 
 const MAX_ITERATIONS: usize = 1_000_000; // Hard stop to prevent infinite loops in free list traversal

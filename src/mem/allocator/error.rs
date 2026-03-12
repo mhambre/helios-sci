@@ -1,7 +1,7 @@
 use std::i32;
 
 /// Error types for possible allocator-related errors.
-pub enum AllocError {
+pub enum _AllocError {
     /// The allocator is not ready to allocate memory.
     NotReady,
     /// Init failed.
@@ -16,15 +16,15 @@ pub enum AllocError {
     UnknownError,
 }
 
-impl From<i32> for AllocError {
+impl From<i32> for _AllocError {
     fn from(value: i32) -> Self {
         match value {
-            0 => AllocError::NotReady,
-            1 => AllocError::InitFailed,
-            2 => AllocError::SizeOverflow,
-            3 => AllocError::ZeroSize,
-            4 => AllocError::OutOfMemory,
-            _ => AllocError::UnknownError,
+            0 => _AllocError::NotReady,
+            1 => _AllocError::InitFailed,
+            2 => _AllocError::SizeOverflow,
+            3 => _AllocError::ZeroSize,
+            4 => _AllocError::OutOfMemory,
+            _ => _AllocError::UnknownError,
         }
     }
 }

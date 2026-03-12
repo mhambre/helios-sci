@@ -6,7 +6,7 @@ mod epoll;
 mod fcntl;
 #[allow(dead_code)]
 mod file;
-#[allow(dead_code)]
+mod futex;
 mod mmap;
 
 #[allow(dead_code)]
@@ -17,5 +17,5 @@ pub(crate) use fcntl::*;
 #[allow(dead_code)]
 #[allow(unused_imports)]
 pub(crate) use file::*;
-#[allow(dead_code)]
+pub(crate) use futex::*;
 pub(crate) use mmap::*;
