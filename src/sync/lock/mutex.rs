@@ -16,7 +16,13 @@ pub struct MutexGuard<'a, T> {
 impl<T> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
         self.mutex.state.store(LockState::Unlocked as u32, Ordering::Release);
-        futex_wake(&self.mutex.state, LockState::Unlocked as u32);
+        cfg_if::cfg_if! {
+            if #[cfg(target_os = "linux", target_arch = "x86_64")] {
+                futex_wake(&self.mutex.state, LockState::Unlocked as u32);
+            } else {
+                compile_error!("Unsupported Target OS")
+            }
+        }
     }
 }
 
@@ -79,7 +85,13 @@ impl<T> Mutex<T> {
                 };
             }
 
-            futex_wait(&self.state, LockState::Unlocked as u32);
+            cfg_if::cfg_if! {
+                if #[cfg(target_os = "linux", target_arch = "x86_64")] {
+                    futex_wait(&self.state, LockState::Unlocked as u32);
+                } else {
+                    compile_error!("Unsupported Target OS")
+                }
+            }
         }
     }
 }
