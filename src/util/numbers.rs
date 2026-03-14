@@ -8,6 +8,10 @@ pub(crate) fn arg_i32(value: i32) -> usize {
 }
 
 /// Aligns `addr` upwards to the nearest multiple of `align`, which must be a power of two.
+///
+/// Ex.
+///    5 = 101b, align_up(5, 4) -> 8 = 1000b
+///              align_up(5, 16) -> 16 = 10000b
 #[inline]
 pub(crate) fn align_up(addr: usize, align: usize) -> usize {
     let mask = align - 1;

@@ -1,12 +1,11 @@
-//! Memory allocation utilities for the Helios runtime.
-#![allow(dead_code)]
+//! Free-List Allocator - Helios Userspace Implementation
 
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr::null_mut;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{cmp, mem};
 
-use crate::mem::allocator::shared::{AllocState, AtomicAllocState, DEFAULT_HEAP_SIZE, PAGE_SIZE};
+use crate::mem::allocator::shared::{AllocState, AtomicAllocState, DEFAULT_HEAP_SIZE, PAGE_SIZE, request_heap_chunk};
 use crate::util::numbers::align_up;
 
 const MAX_ITERATIONS: usize = 1_000_000; // Hard stop to prevent infinite loops in free list traversal
@@ -48,17 +47,8 @@ impl FLAllocator {
             return Ok(());
         }
 
-        // OS-Specific heap initialization. On Linux, we use `mmap` to ask the kernel for a large initial heap region.
-        cfg_if::cfg_if! {
-            if #[cfg(target_os = "linux", target_arch = "x86_64")] {
-                let heap = crate::util::functions::mmap(0, DEFAULT_HEAP_SIZE, libc::PROT_WRITE | libc::PROT_READ, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0).unwrap_or(null_mut());
-            } else {
-                compile_error!("Unsupported Target OS");
-            }
-        }
-
         // Allocate a massive initial heap region and add it to the free list.
-        let block = heap as *mut FreeBlock;
+        let block = unsafe { request_heap_chunk(None) as *mut FreeBlock };
         unsafe {
             (*block).size = DEFAULT_HEAP_SIZE;
             (*block).next = null_mut();
@@ -72,15 +62,7 @@ impl FLAllocator {
     /// Extend the heap by at least `min_size` bytes and return a new free block for the extended region.
     unsafe fn extend(&self, min_size: usize) -> *mut FreeBlock {
         let size = align_up(cmp::max(min_size, DEFAULT_HEAP_SIZE), PAGE_SIZE);
-
-        // OS-Specific heap extension. On Linux, we use `mmap` to ask the kernel for a large initial heap region.
-        cfg_if::cfg_if! {
-            if #[cfg(target_os = "linux", target_arch = "x86_64")] {
-                let ptr = crate::util::functions::mmap(0, size, libc::PROT_WRITE | libc::PROT_READ, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0).unwrap_or(null_mut());
-            } else {
-                compile_error!("Unsupported Target OS");
-            }
-        }
+        let ptr = unsafe { request_heap_chunk(Some(size)) as *mut FreeBlock };
 
         if ptr.is_null() {
             return null_mut();
