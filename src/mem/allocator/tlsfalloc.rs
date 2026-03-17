@@ -120,16 +120,67 @@ impl TlsfAllocator {
             return;
         }
 
-        if self.add_pool(DEFAULT_HEAP_SIZE).is_null() {
+        let mut inner_lock = self.inner.lock();
+        if self.add_pool(&mut inner_lock, DEFAULT_HEAP_SIZE).is_null() {
             panic!("Failed to initialize TLSF allocator: unable to allocate initial pool");
         }
 
         self.state.store(super::shared::AllocState::Ready, Ordering::Release);
     }
 
+    /// Removes a free block from the free lists and updates the bitmaps accordingly
+    fn remove_free_block(&self, inner_lock: &mut InnerLock, block: *mut BlockHeader) {
+        let (l1_index, l2_index) = get_optimal_free_list_index(unsafe { (*block).actual_size() });
+
+        // If we have a previous block the free list isn't empty, so we just need to remove our block in place
+        // for the prior block
+        unsafe {
+            if !(*block).prev.is_null() {
+                (*(*block).prev).next = (*block).next;
+            } else {
+                inner_lock.free_lists[l1_index][l2_index] = (*block).next;
+            }
+        }
+
+        // If we have a next block, we need to update its prior pointer to skip over our block
+        unsafe {
+            if !(*block).next.is_null() {
+                (*(*block).next).prev = (*block).prev;
+            }
+        }
+
+        // If the free list is now empty, update the bitmaps accordingly
+        if inner_lock.free_lists[l1_index][l2_index].is_null() {
+            inner_lock.l2_bitmap[l1_index] &= !(1 << l2_index);
+            if inner_lock.l2_bitmap[l1_index] == 0 {
+                inner_lock.l1_bitmap &= !(1 << l1_index);
+            }
+        }
+    }
+
+    /// Inserts a free block into the free lists and updates the bitmaps accordingly
+    fn insert_free_block(&self, inner_lock: &mut InnerLock, block: *mut BlockHeader) {
+        let (l1_index, l2_index) = get_optimal_free_list_index(unsafe { (*block).actual_size() });
+
+        // Insert the block at the head of the free list for its size class
+        unsafe {
+            (*block).next = inner_lock.free_lists[l1_index][l2_index];
+            (*block).prev = null_mut();
+        }
+
+        // Not first block in free list, link front back to us
+        if !inner_lock.free_lists[l1_index][l2_index].is_null() {
+            unsafe { (*inner_lock.free_lists[l1_index][l2_index]).prev = block };
+        }
+        inner_lock.free_lists[l1_index][l2_index] = block;
+
+        // Update the bitmaps to indicate that we have a free block in this size class
+        inner_lock.l1_bitmap |= 1 << l1_index;
+        inner_lock.l2_bitmap[l1_index] |= 1 << l2_index;
+    }
+
     /// Requests a new contiguous block of memory from the kernel and adds it to the free lists
-    fn add_pool(&self, size: usize) -> *mut BlockHeader {
-        let mut inner_lock = self.inner.lock();
+    fn add_pool(&self, inner_lock: &mut InnerLock, size: usize) -> *mut BlockHeader {
         let sentinel_size = 2 * MIN_BLOCK_SIZE;
         let request_size: usize = align_up(core::cmp::max(size, DEFAULT_HEAP_SIZE), PAGE_SIZE) + sentinel_size;
         let block = unsafe { request_heap_chunk(Some(request_size)) as *mut BlockHeader };
@@ -165,10 +216,7 @@ impl TlsfAllocator {
 
             // Add the new pool block to the free lists
             // Sentinels are ignored to
-            let (l1_index, l2_index) = get_optimal_free_list_index((*pool_block).size);
-            inner_lock.l1_bitmap |= 1 << l1_index;
-            inner_lock.l2_bitmap[l1_index] |= 1 << l2_index;
-            inner_lock.free_lists[l1_index][l2_index] = pool_block;
+            self.insert_free_block(inner_lock, pool_block);
 
             pool_block
         }
@@ -193,7 +241,7 @@ impl TlsfAllocator {
     /// Splits a free block into an allocated block, and the remaining (optional) into a smaller free block,
     /// which is added back to the free lists. Returns a pointer to the allocated block's usable memory
     fn split_free_block(&self, inner_lock: &mut InnerLock, block: *mut BlockHeader, needed: usize) -> *mut u8 {
-        let (original_size, original_prev_physical) = unsafe { ((*block).size, (*block).prev_physical) };
+        let (original_size, original_prev_physical) = unsafe { ((*block).actual_size(), (*block).prev_physical) };
         let block_start = block as usize;
         let free_block_start = align_up(block_start + needed, core::mem::align_of::<BlockHeader>());
         let alloc_block_ptr = block;
@@ -202,34 +250,23 @@ impl TlsfAllocator {
             if (block_start + original_size).saturating_sub(free_block_start) <= MIN_BLOCK_SIZE {
                 // Consume the entire block, so we just allocate it without splitting
                 (*alloc_block_ptr).size = original_size;
-                (*alloc_block_ptr).prev_physical = original_prev_physical;
             } else {
                 // Split the block, and insert the free block back into the free lists
                 let free_block_ptr = free_block_start as *mut BlockHeader;
 
                 // Make the allocated block look like a valid allocated block by updating the header
                 (*alloc_block_ptr).size = free_block_start - block_start;
-                (*alloc_block_ptr).prev_physical = original_prev_physical;
-                (*alloc_block_ptr).mark_allocated();
-                (*alloc_block_ptr).next = null_mut();
-                (*alloc_block_ptr).prev = null_mut();
 
                 // Make the free block look like a valid free block
                 (*free_block_ptr).size = original_size - (*alloc_block_ptr).size;
                 (*free_block_ptr).prev_physical = block_start;
-                (*free_block_ptr).next = null_mut();
-                (*free_block_ptr).prev = null_mut();
 
                 // Insert the new free block into the free lists
-                let (l1_index, l2_index) = get_optimal_free_list_index((*free_block_ptr).size);
-                inner_lock.l1_bitmap |= 1 << l1_index;
-                inner_lock.l2_bitmap[l1_index] |= 1 << l2_index;
-                (*free_block_ptr).next = inner_lock.free_lists[l1_index][l2_index];
-                if !inner_lock.free_lists[l1_index][l2_index].is_null() {
-                    (*inner_lock.free_lists[l1_index][l2_index]).prev = free_block_ptr;
-                }
-                inner_lock.free_lists[l1_index][l2_index] = free_block_ptr;
+                self.insert_free_block(inner_lock, free_block_ptr);
             }
+
+            (*alloc_block_ptr).mark_allocated();
+            (*alloc_block_ptr).prev_physical = original_prev_physical;
         }
 
         (alloc_block_ptr as usize + BLOCK_HEADER_SIZE) as *mut u8
@@ -249,17 +286,12 @@ impl TlsfAllocator {
             // https://doc.rust-lang.org/std/primitive.u32.html#method.trailing_zeros
             if l1_index == 0 as usize {
                 // Add pool and get the next available free block again (it)
-                let pool = self.add_pool(size);
-                (l1_index, l2_index) = if unsafe { (*pool).size == size } {
+                let pool = self.add_pool(inner_lock, size);
+                (l1_index, l2_index) = if unsafe { (*pool).actual_size() == size } {
                     get_optimal_free_list_index(size)
                 } else {
                     self.get_next_available_free(inner_lock, size)
                 };
-
-                // If we still don't have a block, then we are out of memory
-                if l1_index == 0 as usize {
-                    return null_mut();
-                }
             }
 
             block = inner_lock.free_lists[l1_index][l2_index];
@@ -299,42 +331,64 @@ impl TlsfAllocator {
     }
 
     /// Coalesces a free block with its adjacent free blocks they are also free, and adds the resulting free block back to the free lists
-    fn _rebuild_free_block(&self, ptr: *mut u8) {
+    fn rebuild_free_block(&self, ptr: *mut u8) {
         let mut inner_lock = self.inner.lock();
         let block_start = (ptr as usize).saturating_sub(BLOCK_HEADER_SIZE);
         let block_ptr = block_start as *mut BlockHeader;
         let mut start_ptr = block_ptr;
         let mut end_ptr = block_ptr;
+        let original_size = unsafe { (*block_ptr).actual_size() };
 
         // Find prior blocks to coalesce with, and update the start pointer to the start of the coalesced block
-        loop {
-            let prev_block = unsafe { &*start_ptr }.prev_physical as *mut BlockHeader;
-            if prev_block.is_null() {
-                break;
-            }
-            if prev_block.is_free() {
+        unsafe {
+            let prev_block = { &*start_ptr }.prev_physical as *mut BlockHeader;
+            if !prev_block.is_null() && (*prev_block).is_free() {
                 start_ptr = prev_block;
-            } else {
-                break;
+                self.remove_free_block(&mut inner_lock, prev_block);
             }
         }
 
         // Find next blocks to coalesce with, and update the end pointer to the end of the coalesced block
-        loop {
-            let next_block = unsafe { &*end_ptr }.actual_size().saturating_add(end_ptr as usize) as *mut BlockHeader;
-            if next_block.is_null() {
-                break;
-            }
-            if next_block.is_free() {
+        unsafe {
+            let next_block = (end_ptr as usize + (&*end_ptr).actual_size()) as *mut BlockHeader;
+            if !next_block.is_null() && (*next_block).is_free() {
                 end_ptr = next_block;
-            } else {
-                break;
+                self.remove_free_block(&mut inner_lock, next_block);
             }
         }
 
         let coalesced_size = (unsafe { &*end_ptr }.actual_size() + end_ptr as usize).saturating_sub(start_ptr as usize);
+        let block = start_ptr as *mut BlockHeader;
 
-        unimplemented!()
+        unsafe {
+            (*start_ptr).size = coalesced_size;
+            (*start_ptr).mark_free();
+
+            // If the block was coalesced with other blocks, we need to remove the other blocks from the free lists
+            if (*start_ptr).actual_size() != original_size {
+                let (l1_index, l2_index) = get_optimal_free_list_index(unsafe { &*block_ptr }.actual_size());
+                if !(*block_ptr).prev.is_null() {
+                    (*(*block_ptr).prev).next = (*block_ptr).next;
+                } else {
+                    inner_lock.free_lists[l1_index][l2_index] = (*block_ptr).next;
+                }
+                if !(*block_ptr).next.is_null() {
+                    (*(*block_ptr).next).prev = (*block_ptr).prev;
+                }
+
+                // If the free list is now empty, update the bitmaps
+                if inner_lock.free_lists[l1_index][l2_index].is_null() {
+                    inner_lock.l2_bitmap[l1_index] &= !(1 << l2_index);
+                    if inner_lock.l2_bitmap[l1_index] == 0 {
+                        inner_lock.l1_bitmap &= !(1 << l1_index);
+                    }
+                }
+            }
+
+            (*start_ptr).next = null_mut();
+            (*start_ptr).prev = null_mut();
+            self.insert_free_block(&mut inner_lock, start_ptr);
+        }
     }
 }
 
@@ -351,8 +405,9 @@ unsafe impl GlobalAlloc for TlsfAllocator {
         if ptr.is_null() { null_mut() } else { ptr as *mut u8 }
     }
 
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
         self.init();
+        self.rebuild_free_block(ptr);
     }
 }
 
